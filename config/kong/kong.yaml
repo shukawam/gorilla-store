@@ -37,4 +37,3 @@ plugins:
         enable_request_metrics: true
         enable_upstream_health_metrics: true
         enable_consumer_attribute: true
-      

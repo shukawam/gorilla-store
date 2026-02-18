@@ -81,6 +81,7 @@ services:
       KONG_KONNECT_MODE: on
       KONG_CLUSTER_DP_LABELS: type:docker-macOsArmOS
       KONG_ROUTER_FLAVOR: expressions
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
       KONG_TRACING_INSTRUMENTATIONS: all
       KONG_TRACING_SAMPLING_RATE: 1.0
       KONG_PROXY_ACCESS_LOG: /dev/stdout

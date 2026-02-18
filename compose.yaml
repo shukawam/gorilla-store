@@ -16,6 +16,9 @@ x-otel-env: &otel-env
 networks:
   kong-network:
 
+volumes:
+  mysql_data:
+
 services:
   frontend:
     <<: *default
@@ -79,41 +82,77 @@ services:
       interval: 30s
       timeout: 30s
       retries: 3
-  migrations:
+  kong-bootstrap:
     <<: *default
-    image: &kong-gateway-image kong/kong-gateway:3.13.0.0
-    container_name: migrations
+    image: &kong-gateway-image kong/kong-gateway:3.13
+    container_name: kong-bootstrap
     depends_on:
-      - database
+      database:
+        condition: service_healthy
     command: kong migrations bootstrap
     environment:
       <<: *kong-env
+  kong-cp:
+    <<: *default
+    image: *kong-gateway-image
+    container_name: kong-cp
+    depends_on:
+      kong-bootstrap:
+        condition: service_completed_successfully
+    ports:
+      - 8001:8001
+      - 8002:8002
+      - 8007:8100
+    environment:
+      <<: *kong-env
+      KONG_ROLE: control_plane
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_LISTEN: 0.0.0.0:8002
+      KONG_CLUSTER_LISTEN: 0.0.0.0:8005
+      KONG_TELEMETRY_LISTEN: 0.0.0.0:8006
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      KONG_ADMIN_GUI_HOST: http://localhost:8002
+      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA:-}
+      KONG_TRACING_INSTRUMENTATIONS: all
+      KONG_TRACING_SAMPLING_RATE: 1.0
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_CLUSTER_CERT: /etc/kong/certs/tls.crt
+      KONG_CLUSTER_CERT_KEY: /etc/kong/certs/tls.key
+    volumes:
+      - ./config/kong/certs:/etc/kong/certs
   gateway:
     <<: *default
     image: *kong-gateway-image
     container_name: gateway
     depends_on:
-      - migrations
+      kong-bootstrap:
+        condition: service_completed_successfully
     ports:
       - 8000:8000
-      - 8001:8001
-      - 8002:8002
-      - 8100:8100 # Status API
+      - 8100:8100
     environment:
-      <<: *kong-env
+      KONG_ROLE: data_plane
+      KONG_DATABASE: off
+      KONG_CLUSTER_SERVER_NAME: kong-cluster
+      KONG_CLUSTER_CONTROL_PLANE: kong-cp:8005
+      KONG_CLUSTER_TELEMETRY_ENDPOINT: kong-cp:8006
+      KONG_CLUSTER_TELEMETRY_SERVER_NAME: kong-cp
+      KONG_CLUSTER_MTLS: shared
+      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA:-}
+      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      KONG_TRACING_INSTRUMENTATIONS: all
+      KONG_TRACING_SAMPLING_RATE: 1.0
       KONG_PROXY_ACCESS_LOG: /dev/stdout
       KONG_ADMIN_ACCESS_LOG: /dev/stdout
       KONG_PROXY_ERROR_LOG: /dev/stderr
       KONG_ADMIN_ERROR_LOG: /dev/stderr
-      KONG_ADMIN_LISTEN: 0.0.0.0:8001
-      KONG_ADMIN_GUI_HOST: http://localhost:8002
-      # Kong Gateway License Key, if you have
-      KONG_LICENSE_DATA: ${KONG_LICENSE_DATA:-}
-      # Enable tracing
-      KONG_TRACING_INSTRUMENTATIONS: all
-      KONG_TRACING_SAMPLING_RATE: 1.0
-      # Enable Status API for Data Plane
-      KONG_STATUS_LISTEN: 0.0.0.0:8100
+      KONG_CLUSTER_CERT: /etc/kong/certs/tls.crt
+      KONG_CLUSTER_CERT_KEY: /etc/kong/certs/tls.key
+    volumes:
+      - ./config/kong/certs:/etc/kong/certs
   deck:
     <<: *default
     image: kong/deck:v1.49.0
@@ -124,6 +163,7 @@ services:
     command:
       ["gateway", "sync", "--kong-addr", "http://gateway:8001", "kong.yaml"]
     depends_on:
+      - kong-cp
       - gateway
 
   # --- Redis ---
